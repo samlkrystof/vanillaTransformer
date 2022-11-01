@@ -1,9 +1,12 @@
+import copy
 import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def clones(module: nn.Module, N) -> nn.ModuleList:
+    return nn.ModuleList(copy.deepcopy(module) for _ in range(N))
 
 class PositionalEncoder(nn.Module):
     def __init__(self, embedding_dim=512, max_length=5000, dropout=0.1):
@@ -88,23 +91,23 @@ class MultiHeadedAttention(nn.Module):
 class EncoderBlock(nn.Module):
     def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1):
         super(EncoderBlock, self).__init__()
+        num_sublayers = 2
         self.embedding_dim = embedding_dim
         self.heads = heads
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = clones(nn.Dropout(dropout), num_sublayers)
         self.attention_module = MultiHeadedAttention(embedding_dim, heads, dropout)
-        # todo check layernorm params
-        self.layer_norm = nn.LayerNorm(embedding_dim)
+        self.layer_norm = clones(nn.LayerNorm(embedding_dim), num_sublayers)
         self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim),
                                          nn.ReLU(),
                                          nn.Linear(feedforward_dim, embedding_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         multi_headed = self.attention_module(x, x, x)
-        multi_headed = self.dropout(multi_headed)
-        norm = self.layer_norm(multi_headed + x)
+        multi_headed = self.dropout[0](multi_headed)
+        norm = self.layer_norm[0](multi_headed + x)
         after_forward = self.feedforward(norm)
-        after_forward = self.dropout(after_forward)
-        second_norm = self.layer_norm(after_forward + norm)
+        after_forward = self.dropout[1](after_forward)
+        second_norm = self.layer_norm[1](after_forward + norm)
 
         return second_norm
 
@@ -112,14 +115,14 @@ class EncoderBlock(nn.Module):
 class DecoderBlock(nn.Module):
     def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1):
         super(DecoderBlock, self).__init__()
+        num_sublayers = 3
         self.embedding_dim = embedding_dim
         self.heads = heads
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = clones(nn.Dropout(dropout), num_sublayers)
         self.masked_attention = MultiHeadedAttention(embedding_dim, heads, dropout)
         self.enc_dec_attention = MultiHeadedAttention(embedding_dim, heads, dropout)
 
-        # todo check layernorm params
-        self.layer_norm = nn.LayerNorm(embedding_dim)
+        self.layer_norm = clones(nn.LayerNorm(embedding_dim), num_sublayers)
         self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim),
                                          nn.ReLU(),
                                          nn.Linear(feedforward_dim, embedding_dim))
@@ -127,16 +130,15 @@ class DecoderBlock(nn.Module):
     def forward(self, encoder_x: torch.Tensor, decoder_x: torch.Tensor) -> torch.Tensor:
         N, S, E = decoder_x.shape
         mask = torch.tril(torch.ones(S, S))
-        print(mask.shape)
         result = self.masked_attention(decoder_x, decoder_x, decoder_x, mask)
-        result = self.dropout(result)
-        first_norm = self.layer_norm(decoder_x + result)
+        result = self.dropout[0](result)
+        first_norm = self.layer_norm[0](decoder_x + result)
         cross_attention = self.enc_dec_attention(encoder_x, encoder_x, first_norm)
-        cross_attention = self.dropout(cross_attention)
-        second_norm = self.layer_norm(first_norm + cross_attention)
+        cross_attention = self.dropout[1](cross_attention)
+        second_norm = self.layer_norm[1](first_norm + cross_attention)
         feed_forward = self.feedforward(second_norm)
-        feed_forward = self.dropout(feed_forward)
-        third_norm = self.layer_norm(second_norm + feed_forward)
+        feed_forward = self.dropout[2](feed_forward)
+        third_norm = self.layer_norm[2](second_norm + feed_forward)
 
         return third_norm
 
