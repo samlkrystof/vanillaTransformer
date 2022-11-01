@@ -141,14 +141,3 @@ class DecoderBlock(nn.Module):
         third_norm = self.layer_norm[2](second_norm + feed_forward)
 
         return third_norm
-
-
-N, S, T, E = 10, 14, 2, 32
-input = torch.rand(N, S, E)
-enc = EncoderBlock(E, 4, 156)
-output = enc(input)
-ran = torch.rand(N, T, E)
-assert input.shape == output.shape
-dec = DecoderBlock(E, 4, 165, 0.1)
-out = dec(output, ran)
-assert ran.shape == out.shape
