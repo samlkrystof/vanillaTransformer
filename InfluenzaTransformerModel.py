@@ -5,8 +5,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def clones(module: nn.Module, N) -> nn.ModuleList:
     return nn.ModuleList(copy.deepcopy(module) for _ in range(N))
+
 
 class PositionalEncoder(nn.Module):
     def __init__(self, embedding_dim=512, max_length=5000, dropout=0.1):
@@ -19,7 +21,6 @@ class PositionalEncoder(nn.Module):
         self.pos_encoding = torch.empty(1, max_length, embedding_dim)
 
         indices = torch.arange(0, max_length).unsqueeze(1)
-        print(indices.shape)
         pow_term = torch.pow(torch.full((embedding_dim // 2,), 10000),
                              -torch.arange(0, embedding_dim, 2).float() / embedding_dim)
 
@@ -42,7 +43,7 @@ class PositionalEncoder(nn.Module):
 
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, embedding_dim, heads, dropout):
+    def __init__(self, embedding_dim, heads, dropout, **kwargs):
         super(MultiHeadedAttention, self).__init__()
 
         assert embedding_dim % heads == 0
@@ -51,11 +52,11 @@ class MultiHeadedAttention(nn.Module):
         self.size_per_head = embedding_dim // heads
         self.dropout = nn.Dropout(dropout)
 
-        self.key = nn.Linear(embedding_dim, embedding_dim)
-        self.query = nn.Linear(embedding_dim, embedding_dim)
-        self.value = nn.Linear(embedding_dim, embedding_dim)
+        self.key = nn.Linear(embedding_dim, embedding_dim, **kwargs)
+        self.query = nn.Linear(embedding_dim, embedding_dim, **kwargs)
+        self.value = nn.Linear(embedding_dim, embedding_dim, **kwargs)
 
-        self.projection = nn.Linear(embedding_dim, embedding_dim)
+        self.projection = nn.Linear(embedding_dim, embedding_dim, **kwargs)
 
     def forward(self, key: torch.Tensor, value: torch.Tensor, query: torch.Tensor,
                 mask: torch.Tensor = None) -> torch.Tensor:
@@ -68,7 +69,6 @@ class MultiHeadedAttention(nn.Module):
         :return:
         """
 
-        N, T, E = key.shape
         N, S, E = query.shape
 
         key_trans, value_trans, query_trans = [layer(x).view(N, -1, self.heads, self.size_per_head).transpose(1, 2)
@@ -77,8 +77,6 @@ class MultiHeadedAttention(nn.Module):
 
         scores = torch.matmul(query_trans, key_trans.transpose(-1, -2)) / math.sqrt(self.size_per_head)
         if mask != None:
-            print(scores.shape)
-            print(mask.shape)
             scores = scores.masked_fill(mask.eq(0), -1e12)
 
         scores = self.dropout(scores)
@@ -89,17 +87,17 @@ class MultiHeadedAttention(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1):
+    def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1, **kwargs):
         super(EncoderBlock, self).__init__()
         num_sublayers = 2
         self.embedding_dim = embedding_dim
         self.heads = heads
         self.dropout = clones(nn.Dropout(dropout), num_sublayers)
-        self.attention_module = MultiHeadedAttention(embedding_dim, heads, dropout)
-        self.layer_norm = clones(nn.LayerNorm(embedding_dim), num_sublayers)
-        self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim),
+        self.attention_module = MultiHeadedAttention(embedding_dim, heads, dropout, **kwargs)
+        self.layer_norm = clones(nn.LayerNorm(embedding_dim, **kwargs), num_sublayers)
+        self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim, **kwargs),
                                          nn.ReLU(),
-                                         nn.Linear(feedforward_dim, embedding_dim))
+                                         nn.Linear(feedforward_dim, embedding_dim, **kwargs))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         multi_headed = self.attention_module(x, x, x)
@@ -113,23 +111,23 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1):
+    def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1, **kwargs):
         super(DecoderBlock, self).__init__()
         num_sublayers = 3
         self.embedding_dim = embedding_dim
         self.heads = heads
         self.dropout = clones(nn.Dropout(dropout), num_sublayers)
-        self.masked_attention = MultiHeadedAttention(embedding_dim, heads, dropout)
-        self.enc_dec_attention = MultiHeadedAttention(embedding_dim, heads, dropout)
+        self.masked_attention = MultiHeadedAttention(embedding_dim, heads, dropout, **kwargs)
+        self.enc_dec_attention = MultiHeadedAttention(embedding_dim, heads, dropout, **kwargs)
 
-        self.layer_norm = clones(nn.LayerNorm(embedding_dim), num_sublayers)
-        self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim),
+        self.layer_norm = clones(nn.LayerNorm(embedding_dim, **kwargs), num_sublayers)
+        self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim, **kwargs),
                                          nn.ReLU(),
-                                         nn.Linear(feedforward_dim, embedding_dim))
+                                         nn.Linear(feedforward_dim, embedding_dim, **kwargs))
 
     def forward(self, encoder_x: torch.Tensor, decoder_x: torch.Tensor) -> torch.Tensor:
         N, S, E = decoder_x.shape
-        mask = torch.tril(torch.ones(S, S))
+        mask = torch.tril(torch.ones(S, S, device=decoder_x.device, dtype=torch.uint8))
         result = self.masked_attention(decoder_x, decoder_x, decoder_x, mask)
         result = self.dropout[0](result)
         first_norm = self.layer_norm[0](decoder_x + result)
@@ -141,3 +139,15 @@ class DecoderBlock(nn.Module):
         third_norm = self.layer_norm[2](second_norm + feed_forward)
 
         return third_norm
+
+
+factory_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "dtype": torch.float32}
+N, T, S, E = 20, 12, 40, 60
+dec_input = torch.rand(N, T, E, **factory_kwargs)
+enc_input = torch.rand(N, S, E, **factory_kwargs)
+pos = PositionalEncoder(E)
+enc = EncoderBlock(E, 4, 2048, **factory_kwargs)
+dec = DecoderBlock(E, 4, 2048, **factory_kwargs)
+enc_output = enc(enc_input)
+dec_output = dec(enc_output, dec_input)
+dec_output2 = dec(dec_input, dec_input)
