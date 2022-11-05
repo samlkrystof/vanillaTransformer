@@ -11,23 +11,23 @@ def clones(module: nn.Module, N) -> nn.ModuleList:
 
 
 class PositionalEncoder(nn.Module):
-    def __init__(self, embedding_dim=512, max_length=5000, dropout=0.1):
+    def __init__(self, embedding_dim=512, max_length=5000, dropout=0.1, **kwargs):
         super(PositionalEncoder, self).__init__()
 
         self.dropout = nn.Dropout(dropout)
         self.embedding_dim = embedding_dim
         self.max_length = max_length
 
-        self.pos_encoding = torch.empty(1, max_length, embedding_dim)
+        self.pos_encoding = torch.empty(1, max_length, embedding_dim, **kwargs)
 
-        indices = torch.arange(0, max_length).unsqueeze(1)
-        pow_term = torch.pow(torch.full((embedding_dim // 2,), 10000),
-                             -torch.arange(0, embedding_dim, 2).float() / embedding_dim)
+        indices = torch.arange(0, max_length, **kwargs).unsqueeze(1)
+        pow_term = torch.pow(torch.full((embedding_dim // 2,), 10000, **kwargs),
+                             -torch.arange(0, embedding_dim, 2, **kwargs).float() / embedding_dim)
 
         self.pos_encoding[0, :, 0::2] = torch.sin(indices * pow_term)
         self.pos_encoding[0, :, 1::2] = torch.cos(indices * pow_term)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
 
         :param x: (N,S,E)
@@ -141,13 +141,23 @@ class DecoderBlock(nn.Module):
         return third_norm
 
 
-factory_kwargs = {"device": "cuda" if torch.cuda.is_available() else "cpu", "dtype": torch.float32}
-N, T, S, E = 20, 12, 40, 60
-dec_input = torch.rand(N, T, E, **factory_kwargs)
-enc_input = torch.rand(N, S, E, **factory_kwargs)
-pos = PositionalEncoder(E)
-enc = EncoderBlock(E, 4, 2048, **factory_kwargs)
-dec = DecoderBlock(E, 4, 2048, **factory_kwargs)
-enc_output = enc(enc_input)
-dec_output = dec(enc_output, dec_input)
-dec_output2 = dec(dec_input, dec_input)
+class Transformer(nn.Module):
+    def __init__(self, num_encoder_blocks, num_decoder_blocks, embedding_dim, heads, feedforward_dim, dropout,
+                 max_length, **kwargs):
+        super(Transformer, self).__init__()
+        self.embedding_dim = embedding_dim
+
+        self.positional_encoding = PositionalEncoder(embedding_dim, max_length, dropout, **kwargs)
+        self.encoder = nn.Sequential(*clones(EncoderBlock(embedding_dim, heads, feedforward_dim, dropout, **kwargs),
+                                             num_encoder_blocks))
+        self.decoder = nn.Sequential(*clones(DecoderBlock(embedding_dim, heads, feedforward_dim, dropout, **kwargs),
+                                             num_decoder_blocks))
+        self.projection = nn.Linear(embedding_dim, 1, **kwargs)
+
+    def forward(self, encoder_x: torch.Tensor, decoder_x: torch.Tensor) -> torch.Tensor:
+        pos_encoded_encoder = self.positional_encoding(encoder_x)
+        encoder_y = self.encoder(pos_encoded_encoder)
+        pos_encoded_decoder = self.positional_encoding(decoder_x)
+        decoder_y = self.decoder(encoder_y, pos_encoded_decoder)
+        output = self.projection(decoder_y)
+        return output
