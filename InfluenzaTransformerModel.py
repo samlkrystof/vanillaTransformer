@@ -143,7 +143,7 @@ class DecoderBlock(nn.Module):
 
 class Transformer(nn.Module):
     def __init__(self, num_encoder_blocks, num_decoder_blocks, embedding_dim, heads, feedforward_dim, dropout,
-                 max_length, **kwargs):
+                 max_length, num_classes, **kwargs):
         super(Transformer, self).__init__()
         self.embedding_dim = embedding_dim
 
@@ -152,7 +152,7 @@ class Transformer(nn.Module):
                                              num_encoder_blocks))
         self.decoder = nn.Sequential(*clones(DecoderBlock(embedding_dim, heads, feedforward_dim, dropout, **kwargs),
                                              num_decoder_blocks))
-        self.projection = nn.Linear(embedding_dim, 1, **kwargs)
+        self.projection = nn.Linear(embedding_dim, num_classes, **kwargs)
 
     def forward(self, encoder_x: torch.Tensor, decoder_x: torch.Tensor) -> torch.Tensor:
         pos_encoded_encoder = self.positional_encoding(encoder_x)
