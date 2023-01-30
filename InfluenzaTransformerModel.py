@@ -16,7 +16,8 @@ class PositionalEncoder(nn.Module):
     link: https://arxiv.org/abs/1706.03762
 
     """
-    def __init__(self, embedding_dim: int =512, max_length: int =5000, dropout : int =0.1, **kwargs) -> None:
+
+    def __init__(self, embedding_dim: int = 512, max_length: int = 5000, dropout: int = 0.1, **kwargs) -> None:
         super(PositionalEncoder, self).__init__()
 
         self.dropout = nn.Dropout(dropout)
@@ -50,7 +51,8 @@ class MultiHeadedAttention(nn.Module):
     """
     Multi Headed Attention from "Attention is all you need"
     """
-    def __init__(self, embedding_dim, heads, dropout, **kwargs):
+
+    def __init__(self, embedding_dim: int, heads: int, dropout: float, **kwargs):
         super(MultiHeadedAttention, self).__init__()
 
         assert embedding_dim % heads == 0
@@ -94,7 +96,8 @@ class MultiHeadedAttention(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1, **kwargs):
+    def __init__(self, embedding_dim: int, heads: int, feedforward_dim: int, activation: str = "relu",
+                 dropout: float = 0.1, **kwargs):
         super(EncoderBlock, self).__init__()
         num_sublayers = 2
         self.embedding_dim = embedding_dim
@@ -104,7 +107,7 @@ class EncoderBlock(nn.Module):
         self.attention_module = MultiHeadedAttention(embedding_dim, heads, dropout, **kwargs)
         self.layer_norm = clones(nn.LayerNorm(embedding_dim, **kwargs), num_sublayers)
         self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim, **kwargs),
-                                         nn.ReLU(),
+                                         nn.ReLU() if activation == "relu" else nn.GELU(),
                                          nn.Linear(feedforward_dim, embedding_dim, **kwargs))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -122,7 +125,8 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, embedding_dim, heads, feedforward_dim, dropout=0.1, **kwargs):
+    def __init__(self, embedding_dim: int, heads: int, feedforward_dim: int, activation: str = "relu",
+                 dropout: float = 0.1, **kwargs):
         super(DecoderBlock, self).__init__()
         num_sublayers = 3
         self.embedding_dim = embedding_dim
@@ -133,7 +137,7 @@ class DecoderBlock(nn.Module):
 
         self.layer_norm = clones(nn.LayerNorm(embedding_dim, **kwargs), num_sublayers)
         self.feedforward = nn.Sequential(nn.Linear(embedding_dim, feedforward_dim, **kwargs),
-                                         nn.ReLU(),
+                                         nn.ReLU() if activation == "relu" else nn.GELU(),
                                          nn.Linear(feedforward_dim, embedding_dim, **kwargs))
 
     def forward(self, encoder_x: torch.Tensor, decoder_x: torch.Tensor) -> torch.Tensor:
@@ -164,23 +168,30 @@ class DecoderBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, num_encoder_blocks, num_decoder_blocks, embedding_dim, heads, feedforward_dim, dropout,
-                 max_length, num_classes, **kwargs):
+    def __init__(self, num_encoder_blocks: int, num_decoder_blocks: int, embedding_dim: int, heads: int,
+                 feedforward_dim: int, dropout: float, max_length: int, num_classes: int, activation: str = "relu",
+                 **kwargs):
         super(Transformer, self).__init__()
         self.embedding_dim = embedding_dim
 
         self.positional_encoding = PositionalEncoder(embedding_dim, max_length, dropout, **kwargs)
-        self.encoder = nn.Sequential(*clones(EncoderBlock(embedding_dim, heads, feedforward_dim, dropout, **kwargs),
-                                             num_encoder_blocks))
-        self.decoder = nn.Sequential(*clones(DecoderBlock(embedding_dim, heads, feedforward_dim, dropout, **kwargs),
-                                             num_decoder_blocks))
+        self.encoder = nn.Sequential(
+            *clones(EncoderBlock(embedding_dim, heads, feedforward_dim, activation, dropout, **kwargs),
+                    num_encoder_blocks))
+        self.decoder = nn.Sequential(
+            *clones(DecoderBlock(embedding_dim, heads, feedforward_dim, activation, dropout, **kwargs),
+                    num_decoder_blocks))
         self.projection = nn.Linear(embedding_dim, num_classes, **kwargs)
 
     def forward(self, encoder_x: torch.Tensor, decoder_x: torch.Tensor) -> torch.Tensor:
+        """
+        :param encoder_x: shape (N, T, E)
+        :param decoder_x: shape (N, S, E)
+        :return: shape (N, S, num_classes)
+        """
         pos_encoded_encoder = self.positional_encoding(encoder_x)
         encoder_y = self.encoder(pos_encoded_encoder)
         pos_encoded_decoder = self.positional_encoding(decoder_x)
         decoder_y = self.decoder(encoder_y, pos_encoded_decoder)
         output = self.projection(decoder_y)
         return output
-
